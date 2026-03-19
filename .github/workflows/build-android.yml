@@ -113,10 +113,16 @@ jobs:
         run: |
           NDK_PATH="${{ steps.setup_ndk.outputs.ndk-path }}"
           TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          SYSROOT="$TOOLCHAIN/sysroot"
+
           echo "CC_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
           echo "CXX_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+          echo "CFLAGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+          echo "CXXFLAGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
 
       - name: Build easytier-core (aarch64-android)
         if: steps.check_built.outputs.already_built == 'false'
