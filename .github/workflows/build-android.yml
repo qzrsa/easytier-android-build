@@ -118,14 +118,13 @@ jobs:
           echo "AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
 
-      - name: Build easytier-core (static, aarch64-android)
+      - name: Build easytier-core (aarch64-android)
         if: steps.check_built.outputs.already_built == 'false'
         shell: bash
         run: |
           cargo build --release \
             --target aarch64-linux-android \
-            --bin easytier-core \
-            --features "static" 2>&1 | tee build.log
+            --bin easytier-core 2>&1 | tee build.log
         env:
           CARGO_BUILD_JOBS: 4
           RUSTFLAGS: -C target-feature=+crt-static
@@ -156,7 +155,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: EasyTier ${{ steps.resolve_ref.outputs.ref }} - Android aarch64
           body: |
-            EasyTier Android (aarch64) 静态编译版。
+            EasyTier Android (aarch64) 编译版。
             基于 EasyTier 官方源码 `${{ steps.resolve_ref.outputs.ref }}` 编译。
           files: |
             easytier-core-aarch64-android
