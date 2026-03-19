@@ -1,0 +1,167 @@
+name: Build EasyTier for Android (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      easytier_tag:
+        description: 'EasyTier release tag (e.g. v2.1.0, leave empty for latest)'
+        required: false
+        default: ''
+  schedule:
+    # 每天 UTC 02:00 自动检查新版本
+    - cron: '0 2 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Resolve EasyTier tag
+        id: resolve_tag
+        run: |
+          INPUT_TAG="${{ github.event.inputs.easytier_tag }}"
+          if [ -z "$INPUT_TAG" ]; then
+            LATEST=$(curl -s https://api.github.com/repos/EasyTier/EasyTier/releases/latest | jq -r .tag_name)
+            echo "tag=$LATEST" >> $GITHUB_OUTPUT
+            echo "Resolved latest tag: $LATEST"
+          else
+            echo "tag=$INPUT_TAG" >> $GITHUB_OUTPUT
+            echo "Using input tag: $INPUT_TAG"
+          fi
+
+      - name: Check if already built
+        id: check_built
+        run: |
+          TAG="${{ steps.resolve_tag.outputs.tag }}"
+          # 检查本仓库 releases 中是否已有该 tag
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG")
+          if [ "$STATUS" = "200" ]; then
+            echo "already_built=true" >> $GITHUB_OUTPUT
+            echo "Release $TAG already exists, skipping build."
+          else
+            echo "already_built=false" >> $GITHUB_OUTPUT
+            echo "Release $TAG not found, will build."
+          fi
+
+      - name: Checkout EasyTier source
+        if: steps.check_built.outputs.already_built == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: EasyTier/EasyTier
+          ref: ${{ steps.resolve_tag.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        if: steps.check_built.outputs.already_built == 'false'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust dependencies
+        if: steps.check_built.outputs.already_built == 'false'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-android-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-android-
+
+      - name: Setup Android NDK
+        if: steps.check_built.outputs.already_built == 'false'
+        uses: nttld/setup-ndk@v1
+        id: setup_ndk
+        with:
+          ndk-version: r26d
+          add-to-path: true
+
+      - name: Configure Cargo for Android cross-compilation
+        if: steps.check_built.outputs.already_built == 'false'
+        run: |
+          NDK_PATH="${{ steps.setup_ndk.outputs.ndk-path }}"
+          CLANG="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << EOF
+          [target.aarch64-linux-android]
+          linker = "$CLANG"
+          EOF
+          echo "Linker set to: $CLANG"
+
+      - name: Set Android environment variables
+        if: steps.check_built.outputs.already_built == 'false'
+        run: |
+          NDK_PATH="${{ steps.setup_ndk.outputs.ndk-path }}"
+          TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          echo "CC_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
+          echo "CXX_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang++" >> $GITHUB_ENV
+          echo "AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+
+      - name: Build easytier-core (static, aarch64-android)
+        if: steps.check_built.outputs.already_built == 'false'
+        run: |
+          cargo build --release \
+            --target aarch64-linux-android \
+            --bin easytier-core \
+            --features "static" 2>&1 | tee build.log
+        env:
+          CARGO_BUILD_JOBS: 4
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Verify binary
+        if: steps.check_built.outputs.already_built == 'false'
+        run: |
+          BIN="target/aarch64-linux-android/release/easytier-core"
+          ls -lh "$BIN"
+          file "$BIN"
+
+      - name: Compress binary
+        if: steps.check_built.outputs.already_built == 'false'
+        run: |
+          BIN="target/aarch64-linux-android/release/easytier-core"
+          cp "$BIN" easytier-core-aarch64-android
+          gzip -9 -k easytier-core-aarch64-android
+          sha256sum easytier-core-aarch64-android > easytier-core-aarch64-android.sha256
+          sha256sum easytier-core-aarch64-android.gz >> easytier-core-aarch64-android.sha256
+          cat easytier-core-aarch64-android.sha256
+
+      - name: Create GitHub Release
+        if: steps.check_built.outputs.already_built == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve_tag.outputs.tag }}
+          name: "EasyTier ${{ steps.resolve_tag.outputs.tag }} - Android aarch64"
+          body: |
+            ## EasyTier Android (aarch64) 静态编译版
+
+            基于 EasyTier 官方源码 `${{ steps.resolve_tag.outputs.tag }}` 编译。
+
+            ### 文件说明
+            - `easytier-core-aarch64-android` — 可直接在 Android (aarch64) 上运行的静态链接二进制
+            - `easytier-core-aarch64-android.gz` — gzip 压缩版
+            - `easytier-core-aarch64-android.sha256` — SHA256 校验值
+
+            ### 使用方法
+            ```bash
+            # 下载到 Android 设备（需要 root 或 Termux）
+            adb push easytier-core-aarch64-android /data/local/tmp/easytier-core
+            adb shell chmod +x /data/local/tmp/easytier-core
+            adb shell /data/local/tmp/easytier-core --help
+            ```
+
+            ### 编译环境
+            - Rust stable
+            - Android NDK r26d
+            - Target: `aarch64-linux-android` API 21+
+            - Features: `static`
+          files: |
+            easytier-core-aarch64-android
+            easytier-core-aarch64-android.gz
+            easytier-core-aarch64-android.sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
