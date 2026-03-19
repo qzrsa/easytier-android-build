@@ -68,6 +68,20 @@ jobs:
           ref: ${{ steps.resolve_ref.outputs.ref }}
           fetch-depth: 1
 
+      - name: Install system dependencies
+        if: steps.check_built.outputs.already_built == 'false'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler clang pkg-config
+
+      - name: Verify protoc
+        if: steps.check_built.outputs.already_built == 'false'
+        shell: bash
+        run: |
+          which protoc
+          protoc --version
+
       - name: Install Rust toolchain
         if: steps.check_built.outputs.already_built == 'false'
         uses: dtolnay/rust-toolchain@stable
@@ -99,12 +113,15 @@ jobs:
         shell: bash
         run: |
           NDK_PATH="${{ steps.setup_ndk.outputs.ndk-path }}"
-          CLANG="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+          TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          CLANG="$TOOLCHAIN/bin/aarch64-linux-android21-clang"
+
           mkdir -p ~/.cargo
           cat > ~/.cargo/config.toml << EOF
           [target.aarch64-linux-android]
           linker = "$CLANG"
           EOF
+
           echo "Linker set to: $CLANG"
 
       - name: Set Android environment variables
@@ -115,14 +132,27 @@ jobs:
           TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
           SYSROOT="$TOOLCHAIN/sysroot"
 
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "PROTOC=/usr/bin/protoc" >> "$GITHUB_ENV"
+
           echo "CC_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
           echo "CXX_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
 
-          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+          echo "CC_aarch64-linux-android=$TOOLCHAIN/bin/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64-linux-android=$TOOLCHAIN/bin/aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64-linux-android=$TOOLCHAIN/bin/llvm-ar" >> "$GITHUB_ENV"
+
           echo "CFLAGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
           echo "CXXFLAGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+
+          echo "CFLAGS_aarch64-linux-android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+          echo "CXXFLAGS_aarch64-linux-android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
+
+          echo "TARGET_CC=$TOOLCHAIN/bin/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "TARGET_CFLAGS=--sysroot=$SYSROOT" >> "$GITHUB_ENV"
 
       - name: Build easytier-core (aarch64-android)
         if: steps.check_built.outputs.already_built == 'false'
@@ -152,6 +182,13 @@ jobs:
           gzip -9 -k easytier-core-aarch64-android
           sha256sum easytier-core-aarch64-android > easytier-core-aarch64-android.sha256
           sha256sum easytier-core-aarch64-android.gz >> easytier-core-aarch64-android.sha256
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Create GitHub Release
         if: steps.check_built.outputs.already_built == 'false'
